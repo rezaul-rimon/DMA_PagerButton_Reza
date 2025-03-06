@@ -4,6 +4,7 @@
 #include <PubSubClient.h>
 #include <HTTPClient.h>
 #include <RCSwitch.h>
+#include <Preferences.h>
 RCSwitch mySwitch = RCSwitch();
 
 #include <map>
@@ -16,17 +17,25 @@ unsigned long lastRFGlobalReceivedTime = 0;  // Global debounce
 #define DEBUG_PRINT(x)  if (DEBUG_MODE) { Serial.print(x); }
 #define DEBUG_PRINTLN(x) if (DEBUG_MODE) { Serial.println(x); }
 
+#define CHANGE_DEVICE_ID false
+
+#if CHANGE_DEVICE_ID
 #define WORK_PACKAGE "1225"
 #define GW_TYPE "01" //For Pager Button
 #define FIRMWARE_UPDATE_DATE "250304" 
-#define DEVICE_SERIAL "0099"
-#define DEVICE_ID WORK_PACKAGE GW_TYPE FIRMWARE_UPDATE_DATE DEVICE_SERIAL
+#define DEVICE_SERIAL "0005"
+// #define DEVICE_ID WORK_PACKAGE GW_TYPE FIRMWARE_UPDATE_DATE DEVICE_SERIAL
+#endif
+
+const char* DEVICE_ID;
+
+Preferences preferences;
 
 #define HB_INTERVAL 30*1000
 // #define DATA_INTERVAL 15*1000
 
 // WiFi and MQTT reconnection time config
-#define WIFI_ATTEMPT_COUNT 30
+#define WIFI_ATTEMPT_COUNT 60
 #define WIFI_ATTEMPT_DELAY 1000
 #define WIFI_WAIT_COUNT 60
 #define WIFI_WAIT_DELAY 1000
@@ -287,6 +296,26 @@ void mainTask(void *param) {
 
 void setup() {
   Serial.begin(115200);
+  preferences.begin("device_data", false);  // Open Preferences (NVS)
+  static String device_id; // Static variable to persist scope
+  
+  #if CHANGE_DEVICE_ID
+    // Construct new device ID
+    device_id = String(WORK_PACKAGE) + GW_TYPE + FIRMWARE_UPDATE_DATE + DEVICE_SERIAL;
+    
+    // Save device ID to Preferences
+    preferences.putString("device_id", device_id);
+    Serial.println("Device ID updated in Preferences: " + device_id);
+  #else
+    // Restore device ID from Preferences
+    device_id = preferences.getString("device_id", "UNKNOWN");
+    Serial.println("Restored Device ID from Preferences: " + device_id);
+  #endif
+
+  DEVICE_ID = device_id.c_str(); // Assign to global pointer
+
+  preferences.end();
+
   DEBUG_PRINT("Device ID: ");
   DEBUG_PRINTLN(DEVICE_ID);
 
