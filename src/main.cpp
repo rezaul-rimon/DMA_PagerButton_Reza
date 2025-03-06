@@ -2,7 +2,7 @@
 #include <WiFi.h>
 #include <WiFiManager.h>  // WiFiManager library
 #include <PubSubClient.h>
-
+#include <HTTPClient.h>
 #include <RCSwitch.h>
 RCSwitch mySwitch = RCSwitch();
 
@@ -19,11 +19,11 @@ unsigned long lastRFGlobalReceivedTime = 0;  // Global debounce
 #define WORK_PACKAGE "1225"
 #define GW_TYPE "01" //For Pager Button
 #define FIRMWARE_UPDATE_DATE "250304" 
-#define DEVICE_SERIAL "0002"
+#define DEVICE_SERIAL "0099"
 #define DEVICE_ID WORK_PACKAGE GW_TYPE FIRMWARE_UPDATE_DATE DEVICE_SERIAL
 
 #define HB_INTERVAL 30*1000
-#define DATA_INTERVAL 15*1000
+// #define DATA_INTERVAL 15*1000
 
 // WiFi and MQTT reconnection time config
 #define WIFI_ATTEMPT_COUNT 30
@@ -45,6 +45,9 @@ const char* mqtt_password = "Secret!@#$1234";
 const char* mqtt_hb_topic = "DMA/PagerButton/HB";
 const char* mqtt_pub_topic = "DMA/PagerButton/PUB";
 const char* mqtt_sub_topic = "DMA/PagerButton/SUB";
+const char* ota_url = "https://raw.githubusercontent.com/rezaul-rimon/DMA_PagerButton_Reza/main/ota/firmware.bin";
+
+void performOTA();
 
 #define LED_PIN 21
 #define RF_PIN 25
@@ -125,6 +128,48 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   DEBUG_PRINTLN("Message arrived on topic: " + String(topic));
   DEBUG_PRINTLN("Message content: " + message); 
+
+  // Check if the message is "get_from_sd_card"
+  if (message == "update_firmware") {
+    DEBUG_PRINTLN("Trigger performOTA()...");
+   performOTA();
+  }
+}
+
+// Perform OTA
+void performOTA() {
+  Serial.println("Starting OTA update...");
+
+  HTTPClient http;
+  http.begin(ota_url);
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    int contentLength = http.getSize();
+    Serial.printf("Content-Length: %d bytes\n", contentLength);
+    if (Update.begin(contentLength)) {
+      Update.writeStream(http.getStream());
+      if (Update.end() && Update.isFinished()) {
+        Serial.println("OTA update completed. Restarting...");
+        client.loop(); // Ensure MQTT client processes the publish
+        client.publish(mqtt_pub_topic, "OTA update successful");
+        vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay to allow message to send
+        ESP.restart();
+      } else {
+        Serial.println("OTA update failed!");
+        client.publish(mqtt_pub_topic, "OTA update failed, restarting with last firmware");
+      }
+    } else {
+      Serial.println("OTA begin failed!");
+      client.publish(mqtt_pub_topic, "OTA begin failed, restarting with last firmware");
+    }
+  } else {
+    Serial.printf("HTTP request failed, error: %s\n", http.errorToString(httpCode).c_str());
+    client.publish(mqtt_pub_topic, "OTA HTTP request failed, restarting with last firmware");
+  }
+  http.end();
+
+  vTaskDelay(1000 / portTICK_PERIOD_MS); // Give time for MQTT message to send
+  ESP.restart();
 }
 
 
