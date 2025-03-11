@@ -17,13 +17,14 @@ unsigned long lastRFGlobalReceivedTime = 0;  // Global debounce
 #define DEBUG_PRINT(x)  if (DEBUG_MODE) { Serial.print(x); }
 #define DEBUG_PRINTLN(x) if (DEBUG_MODE) { Serial.println(x); }
 
-#define CHANGE_DEVICE_ID false
+//First time is must set to true.
+#define CHANGE_DEVICE_ID 0
 
 #if CHANGE_DEVICE_ID
 #define WORK_PACKAGE "1225"
 #define GW_TYPE "01" //For Pager Button
 #define FIRMWARE_UPDATE_DATE "250304" 
-#define DEVICE_SERIAL "0005"
+#define DEVICE_SERIAL "0001"
 // #define DEVICE_ID WORK_PACKAGE GW_TYPE FIRMWARE_UPDATE_DATE DEVICE_SERIAL
 #endif
 
@@ -31,7 +32,7 @@ const char* DEVICE_ID;
 
 Preferences preferences;
 
-#define HB_INTERVAL 30*1000
+#define HB_INTERVAL 5*60*1000
 // #define DATA_INTERVAL 15*1000
 
 // WiFi and MQTT reconnection time config
@@ -129,6 +130,7 @@ void reconnectMQTT() {
   }
 }
 
+// MQTT Callback Start
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message;
   for (unsigned int i = 0; i < length; i++) {
@@ -144,8 +146,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
    performOTA();
   }
 }
+// MQTT Callback End
 
-// Perform OTA
+// Start Perform OTA
 void performOTA() {
   Serial.println("Starting OTA update...");
 
@@ -224,7 +227,7 @@ void wifiResetTask(void *param) {
   }
 }
 
-
+/*
 void mainTask(void *param) {
   for (;;) {
     static unsigned long last_hb_send_time = 0;
@@ -266,6 +269,82 @@ void mainTask(void *param) {
 
         // **Debug Output**
         DEBUG_PRINTLN(String("RF Received: ") + String(receivedCode));
+        digitalWrite(LED_PIN, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        digitalWrite(LED_PIN, LOW);
+
+        // **Send Data to MQTT**
+        char data[50];
+        snprintf(data, sizeof(data), "%s,%lu", DEVICE_ID, receivedCode);
+        client.publish(mqtt_pub_topic, data);
+        DEBUG_PRINTLN(String("Data Sent to MQTT: ") + String(data));
+
+        // **Indication Blink**
+        for (int i = 0; i < 3; i++) {
+          digitalWrite(LED_PIN, HIGH);
+          vTaskDelay(pdMS_TO_TICKS(50));
+          digitalWrite(LED_PIN, LOW);
+          vTaskDelay(pdMS_TO_TICKS(50));
+        }
+      }
+
+      mySwitch.resetAvailable();
+    }
+
+    vTaskDelay(1); // Keep FreeRTOS responsive
+  }
+}
+*/
+
+void mainTask(void *param) {
+  for (;;) {
+    static unsigned long last_hb_send_time = 0;
+    unsigned long now = millis();
+
+    // **Send Heartbeat Every HB_INTERVAL**
+    if (now - last_hb_send_time >= HB_INTERVAL) {
+      last_hb_send_time = now;
+      if (client.connected()) {
+        char hb_data[50];
+        snprintf(hb_data, sizeof(hb_data), "%s,wifi_connected", DEVICE_ID);
+        client.publish(mqtt_hb_topic, hb_data);
+        DEBUG_PRINTLN("Heartbeat sent Successfully");
+
+        digitalWrite(LED_PIN, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        digitalWrite(LED_PIN, LOW);
+      } else {
+        DEBUG_PRINTLN("Failed to publish Heartbeat on MQTT");
+      }
+    }
+
+    // **Handle RF Signal Reception with Bit Length Filtering**
+    if (mySwitch.available()) {
+      unsigned long receivedCode = mySwitch.getReceivedValue();
+      int bitLength = mySwitch.getReceivedBitlength(); // Get bit length of the received signal
+
+      // **Ignore signals that do not match the expected bit length (e.g., < 24 bits)**
+      if (bitLength < 24) {  
+        DEBUG_PRINTLN(String("Ignored RF Signal: ") + String(receivedCode) + " (Bits: " + String(bitLength) + ")");
+        mySwitch.resetAvailable();
+        continue;
+      }
+
+      // **Short-Term Global Debounce (Ignore if received within 100ms)**
+      if (now - lastRFGlobalReceivedTime < 100) {
+        mySwitch.resetAvailable();
+        continue;
+      }
+
+      // **Per-Sensor Debounce (Ignore same sensor within 2 sec)**
+      if (lastRFReceivedTimeMap.find(receivedCode) == lastRFReceivedTimeMap.end() || 
+          (now - lastRFReceivedTimeMap[receivedCode] > 2000)) {  
+
+        lastRFReceivedTimeMap[receivedCode] = now;  // Update per-sensor time
+        lastRFGlobalReceivedTime = now;  // Update global debounce
+
+        // **Debug Output**
+        DEBUG_PRINTLN(String("Valid RF Received: ") + String(receivedCode) + " (Bits: " + String(bitLength) + ")");
         digitalWrite(LED_PIN, HIGH);
         vTaskDelay(pdMS_TO_TICKS(100));
         digitalWrite(LED_PIN, LOW);
