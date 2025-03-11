@@ -7,6 +7,8 @@
 #include <Preferences.h>
 RCSwitch mySwitch = RCSwitch();
 
+void otaTask(void *parameter);
+
 #include <map>
 std::map<unsigned long, unsigned long> lastRFReceivedTimeMap;
 unsigned long lastRFGlobalReceivedTime = 0;  // Global debounce
@@ -55,7 +57,7 @@ const char* mqtt_password = "Secret!@#$1234";
 const char* mqtt_hb_topic = "DMA/PagerButton/HB";
 const char* mqtt_pub_topic = "DMA/PagerButton/PUB";
 const char* mqtt_sub_topic = "DMA/PagerButton/SUB";
-const char* ota_url = "https://raw.githubusercontent.com/rezaul-rimon/DMA_PagerButton_Reza/main/ota/firmware.bin";
+const char* ota_url = "https://raw.githubusercontent.com/rezaul-rimon/DMA_PagerButton_Reza/with-ota/ota/firmware.bin";
 
 void performOTA();
 
@@ -69,6 +71,7 @@ PubSubClient client(espClient);
 TaskHandle_t networkTaskHandle;
 TaskHandle_t mainTaskHandle;
 TaskHandle_t wifiResetTaskHandle;
+TaskHandle_t otaTaskHandle = NULL;
 
 #define WIFI_RESET_BUTTON_PIN 0
 bool wifiResetFlag = false;
@@ -140,50 +143,78 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   DEBUG_PRINTLN("Message arrived on topic: " + String(topic));
   DEBUG_PRINTLN("Message content: " + message); 
 
-  // Check if the message is "get_from_sd_card"
+  if (message == "ping") {
+    DEBUG_PRINTLN("Request for ping");
+    char pingData[100]; // Increased size for additional info
+    snprintf(pingData, sizeof(pingData), "%s,%s,%s,%d,%d",
+             DEVICE_ID, WiFi.SSID().c_str(),
+             WiFi.localIP().toString().c_str(), WiFi.RSSI(), HB_INTERVAL);
+    client.publish(mqtt_pub_topic, pingData);
+
+    DEBUG_PRINT("Sent ping response to MQTT: ");
+    DEBUG_PRINTLN(pingData);
+  }
+
   if (message == "update_firmware") {
-    DEBUG_PRINTLN("Trigger performOTA()...");
-   performOTA();
+    if (otaTaskHandle == NULL) {
+      xTaskCreatePinnedToCore(otaTask, "OTA Task", 8*1024, NULL, 1, &otaTaskHandle, 1);
+    } else {
+      Serial.println("OTA Task already running.");
+    }
   }
 }
-// MQTT Callback End
+//=================================
 
-// Start Perform OTA
-void performOTA() {
+//Start OTA Task
+void otaTask(void *parameter) {
   Serial.println("Starting OTA update...");
 
   HTTPClient http;
   http.begin(ota_url);
   int httpCode = http.GET();
+
   if (httpCode == HTTP_CODE_OK) {
     int contentLength = http.getSize();
     Serial.printf("Content-Length: %d bytes\n", contentLength);
+    
     if (Update.begin(contentLength)) {
       Update.writeStream(http.getStream());
       if (Update.end() && Update.isFinished()) {
         Serial.println("OTA update completed. Restarting...");
-        client.loop(); // Ensure MQTT client processes the publish
-        client.publish(mqtt_pub_topic, "OTA update successful");
-        vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay to allow message to send
+        char message[64];  
+        snprintf(message, sizeof(message), "%s,OTA update successful", DEVICE_ID);  
+        client.publish(mqtt_pub_topic, message);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        http.end();
         ESP.restart();
       } else {
         Serial.println("OTA update failed!");
-        client.publish(mqtt_pub_topic, "OTA update failed, restarting with last firmware");
+        char message[64];  
+        snprintf(message, sizeof(message), "%s,OTA Update Failed!", DEVICE_ID);  
+        client.publish(mqtt_pub_topic, message);
       }
     } else {
       Serial.println("OTA begin failed!");
-      client.publish(mqtt_pub_topic, "OTA begin failed, restarting with last firmware");
+      char message[64];  
+      snprintf(message, sizeof(message), "%s,OTA Begin Failed!", DEVICE_ID);  
+      client.publish(mqtt_pub_topic, message);
     }
   } else {
     Serial.printf("HTTP request failed, error: %s\n", http.errorToString(httpCode).c_str());
-    client.publish(mqtt_pub_topic, "OTA HTTP request failed, restarting with last firmware");
+    char message[64];  
+    snprintf(message, sizeof(message), "%s,HTTP Request Failed", DEVICE_ID);  
+    client.publish(mqtt_pub_topic, message);
   }
+
   http.end();
-
-  vTaskDelay(1000 / portTICK_PERIOD_MS); // Give time for MQTT message to send
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+  
   ESP.restart();
-}
 
+  otaTaskHandle = NULL;  
+  vTaskDelete(NULL);
+}
+//============================
 
 void networkTask(void *param) {
   WiFi.mode(WIFI_STA);
@@ -227,75 +258,6 @@ void wifiResetTask(void *param) {
   }
 }
 
-/*
-void mainTask(void *param) {
-  for (;;) {
-    static unsigned long last_hb_send_time = 0;
-    unsigned long now = millis();
-
-    // **Send Heartbeat Every HB_INTERVAL**
-    if (now - last_hb_send_time >= HB_INTERVAL) {
-      last_hb_send_time = now;
-      if (client.connected()) {
-        char hb_data[50];
-        snprintf(hb_data, sizeof(hb_data), "%s,wifi_connected", DEVICE_ID);
-        client.publish(mqtt_hb_topic, hb_data);
-        DEBUG_PRINTLN("Heartbeat sent Successfully");
-
-        digitalWrite(LED_PIN, HIGH);
-        vTaskDelay(pdMS_TO_TICKS(100));
-        digitalWrite(LED_PIN, LOW);
-      } else {
-        DEBUG_PRINTLN("Failed to publish Heartbeat on MQTT");
-      }
-    }
-
-    // **Handle RF Signal Reception with Dual-Level Debounce**
-    if (mySwitch.available()) {
-      unsigned long receivedCode = mySwitch.getReceivedValue();
-
-      // **Short-Term Global Debounce (Ignore if received within 200ms)**
-      if (now - lastRFGlobalReceivedTime < 100) {
-        mySwitch.resetAvailable();
-        return;
-      }
-
-      // **Per-Sensor Debounce (Ignore same sensor within 2 sec)**
-      if (lastRFReceivedTimeMap.find(receivedCode) == lastRFReceivedTimeMap.end() || 
-          (now - lastRFReceivedTimeMap[receivedCode] > 2000)) {  
-
-        lastRFReceivedTimeMap[receivedCode] = now;  // Update per-sensor time
-        lastRFGlobalReceivedTime = now;  // Update global debounce
-
-        // **Debug Output**
-        DEBUG_PRINTLN(String("RF Received: ") + String(receivedCode));
-        digitalWrite(LED_PIN, HIGH);
-        vTaskDelay(pdMS_TO_TICKS(100));
-        digitalWrite(LED_PIN, LOW);
-
-        // **Send Data to MQTT**
-        char data[50];
-        snprintf(data, sizeof(data), "%s,%lu", DEVICE_ID, receivedCode);
-        client.publish(mqtt_pub_topic, data);
-        DEBUG_PRINTLN(String("Data Sent to MQTT: ") + String(data));
-
-        // **Indication Blink**
-        for (int i = 0; i < 3; i++) {
-          digitalWrite(LED_PIN, HIGH);
-          vTaskDelay(pdMS_TO_TICKS(50));
-          digitalWrite(LED_PIN, LOW);
-          vTaskDelay(pdMS_TO_TICKS(50));
-        }
-      }
-
-      mySwitch.resetAvailable();
-    }
-
-    vTaskDelay(1); // Keep FreeRTOS responsive
-  }
-}
-*/
-
 void mainTask(void *param) {
   for (;;) {
     static unsigned long last_hb_send_time = 0;
@@ -327,7 +289,7 @@ void mainTask(void *param) {
       if (bitLength < 24) {  
         DEBUG_PRINTLN(String("Ignored RF Signal: ") + String(receivedCode) + " (Bits: " + String(bitLength) + ")");
         mySwitch.resetAvailable();
-        continue;
+        continue;;
       }
 
       // **Short-Term Global Debounce (Ignore if received within 100ms)**
@@ -345,29 +307,18 @@ void mainTask(void *param) {
 
         // **Debug Output**
         DEBUG_PRINTLN(String("Valid RF Received: ") + String(receivedCode) + " (Bits: " + String(bitLength) + ")");
-        digitalWrite(LED_PIN, HIGH);
-        vTaskDelay(pdMS_TO_TICKS(100));
-        digitalWrite(LED_PIN, LOW);
-
+        
         // **Send Data to MQTT**
         char data[50];
         snprintf(data, sizeof(data), "%s,%lu", DEVICE_ID, receivedCode);
         client.publish(mqtt_pub_topic, data);
         DEBUG_PRINTLN(String("Data Sent to MQTT: ") + String(data));
-
-        // **Indication Blink**
-        for (int i = 0; i < 3; i++) {
-          digitalWrite(LED_PIN, HIGH);
-          vTaskDelay(pdMS_TO_TICKS(50));
-          digitalWrite(LED_PIN, LOW);
-          vTaskDelay(pdMS_TO_TICKS(50));
-        }
       }
 
       mySwitch.resetAvailable();
     }
 
-    vTaskDelay(1); // Keep FreeRTOS responsive
+    vTaskDelay(pdMS_TO_TICKS(10)); // Keep FreeRTOS responsive
   }
 }
 
