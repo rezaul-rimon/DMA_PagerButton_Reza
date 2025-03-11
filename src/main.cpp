@@ -307,12 +307,22 @@ void mainTask(void *param) {
 
         // **Debug Output**
         DEBUG_PRINTLN(String("Valid RF Received: ") + String(receivedCode) + " (Bits: " + String(bitLength) + ")");
-        
+        digitalWrite(LED_PIN, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(60));
+        digitalWrite(LED_PIN, LOW);
+        vTaskDelay(pdMS_TO_TICKS(60));
         // **Send Data to MQTT**
         char data[50];
         snprintf(data, sizeof(data), "%s,%lu", DEVICE_ID, receivedCode);
         client.publish(mqtt_pub_topic, data);
         DEBUG_PRINTLN(String("Data Sent to MQTT: ") + String(data));
+        digitalWrite(LED_PIN, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(60));
+        digitalWrite(LED_PIN, LOW);
+        vTaskDelay(pdMS_TO_TICKS(60));
+        digitalWrite(LED_PIN, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(60));
+        digitalWrite(LED_PIN, LOW);
       }
 
       mySwitch.resetAvailable();
