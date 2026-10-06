@@ -4,14 +4,17 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <Arduino.h>
+#include "config.h"
 
-class MQTTQueue {
-public:
-    static void init();
-    static bool enqueue(const String& message);
-    static bool dequeue(String& message, TickType_t timeout = 0);
-private:
-    static QueueHandle_t queue;
+struct MqttMessage {
+    char topic[MQTT_TOPIC_MAX];
+    char payload[MQTT_PAYLOAD_MAX];
 };
+
+namespace MQTTQueue {
+    void init();
+    bool enqueue(const char* topic, const char* payload);
+    bool dequeue(MqttMessage* out, TickType_t timeout = 0);
+}
 
 #endif

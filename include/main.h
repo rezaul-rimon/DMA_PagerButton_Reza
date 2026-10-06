@@ -14,14 +14,12 @@ extern TaskHandle_t rfTaskHandle;
 extern TaskHandle_t ledTaskHandle;
 
 extern QueueHandle_t rfQueue;
-extern const char* DEVICE_ID;
 
 void setup();
 void loop();
 void networkTask(void *param);
 void mainTask(void *param);
 void wifiResetTask(void *param);
-void rfTask(void *param);
 void otaTask(void *param);
 
 #endif

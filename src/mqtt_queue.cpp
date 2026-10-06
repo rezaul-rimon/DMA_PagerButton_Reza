@@ -1,28 +1,24 @@
 #include "mqtt_queue.h"
 
-QueueHandle_t MQTTQueue::queue = nullptr;
+static QueueHandle_t s_queue = nullptr;
 
 void MQTTQueue::init() {
-    queue = xQueueCreate(20, sizeof(String*));
+    s_queue = xQueueCreate(MQTT_QUEUE_DEPTH, sizeof(MqttMessage));
 }
 
-bool MQTTQueue::enqueue(const String& message) {
-    if (!queue) return false;
-    String* msg = new String(message);
-    if (xQueueSend(queue, &msg, 0) != pdTRUE) {
-        delete msg;
-        return false;
-    }
-    return true;
+bool MQTTQueue::enqueue(const char* topic, const char* payload) {
+    if (!s_queue) return false;
+
+    MqttMessage msg;
+    strncpy(msg.topic, topic, sizeof(msg.topic) - 1);
+    msg.topic[sizeof(msg.topic) - 1] = '\0';
+    strncpy(msg.payload, payload, sizeof(msg.payload) - 1);
+    msg.payload[sizeof(msg.payload) - 1] = '\0';
+
+    return xQueueSend(s_queue, &msg, 0) == pdTRUE;
 }
 
-bool MQTTQueue::dequeue(String& message, TickType_t timeout) {
-    if (!queue) return false;
-    String* msg = nullptr;
-    if (xQueueReceive(queue, &msg, timeout) == pdTRUE) {
-        message = *msg;
-        delete msg;
-        return true;
-    }
-    return false;
+bool MQTTQueue::dequeue(MqttMessage* out, TickType_t timeout) {
+    if (!s_queue || !out) return false;
+    return xQueueReceive(s_queue, out, timeout) == pdTRUE;
 }

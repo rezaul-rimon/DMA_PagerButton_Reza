@@ -1,15 +1,9 @@
 #ifndef DEVICE_ID_H
 #define DEVICE_ID_H
 
-#include <Preferences.h>
+#include <Arduino.h>
 
-class DeviceID {
-public:
-    static void init();
-    static const char* get();
-private:
-    static Preferences prefs;
-    static String id;
-};
+void initDeviceId();
+const char* getDeviceId();
 
 #endif

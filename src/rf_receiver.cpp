@@ -1,10 +1,10 @@
 #include "rf_receiver.h"
 #include "main.h"
 #include "led_controller.h"
-#include "mqtt_queue.h"
 
 RCSwitch RFReceiver::mySwitch;
-std::map<unsigned long, unsigned long> RFReceiver::lastSeenMap;
+RFReceiver::Entry RFReceiver::history[RF_HISTORY_SIZE] = {};
+int RFReceiver::historyIdx = 0;
 unsigned long RFReceiver::lastGlobalTime = 0;
 
 void RFReceiver::init() {
@@ -13,9 +13,11 @@ void RFReceiver::init() {
 
 bool RFReceiver::isDuplicate(unsigned long code, unsigned long now) {
     if (now - lastGlobalTime < GLOBAL_DEBOUNCE_MS) return true;
-    auto it = lastSeenMap.find(code);
-    if (it != lastSeenMap.end() && (now - it->second < SENSOR_DEBOUNCE_MS)) {
-        return true;
+    for (int i = 0; i < RF_HISTORY_SIZE; i++) {
+        if (history[i].code == code &&
+            (now - history[i].time) < SENSOR_DEBOUNCE_MS) {
+            return true;
+        }
     }
     return false;
 }
@@ -23,21 +25,24 @@ bool RFReceiver::isDuplicate(unsigned long code, unsigned long now) {
 void RFReceiver::task(void *param) {
     for (;;) {
         if (mySwitch.available()) {
-            unsigned long receivedCode = mySwitch.getReceivedValue();
+            unsigned long code = mySwitch.getReceivedValue();
             int bitLength = mySwitch.getReceivedBitlength();
             unsigned long now = millis();
 
-            if (bitLength >= 24 && !isDuplicate(receivedCode, now)) {
-                lastSeenMap[receivedCode] = now;
+            if (bitLength >= 24 && !isDuplicate(code, now)) {
+                history[historyIdx].code = code;
+                history[historyIdx].time = now;
+                historyIdx = (historyIdx + 1) % RF_HISTORY_SIZE;
                 lastGlobalTime = now;
 
-                DEBUG_PRINTLN(String("RF Received: ") + String(receivedCode) + " (" + String(bitLength) + " bits)");
+                DEBUG_PRINT("RF Received: ");
+                DEBUG_PRINTLN(code);
 
-                LEDController::blinkColor(CRGB::Blue, 1, 250);
+                LEDController::blinkColor(CRGB::Blue, 1, 300);
 
-                uint32_t code = (uint32_t)receivedCode;
-                if (xQueueSend(rfQueue, &code, 0) != pdTRUE) {
-                    DEBUG_PRINTLN("RF queue full, dropping signal");
+                uint32_t c = (uint32_t)code;
+                if (xQueueSend(rfQueue, &c, 0) != pdTRUE) {
+                    DEBUG_PRINTLN("RF queue full, drop");
                 }
             }
             mySwitch.resetAvailable();

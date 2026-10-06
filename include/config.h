@@ -19,7 +19,13 @@
   #define DEVICE_SERIAL "0001"
 #endif
 
-#define HB_INTERVAL_MS 2 * 60 * 1000
+#define HB_INTERVAL_MS (2UL * 60UL * 1000UL)
+
+// WiFi Manager
+#define AP_PORTAL_SSID "DMA_Pager_Button"
+#define AP_PORTAL_TIMEOUT_SEC 0      // 0 = block forever until configured
+#define WIFI_CONNECT_TIMEOUT_MS 15000 // per-attempt timeout
+
 #define WIFI_ATTEMPT_COUNT 60
 #define WIFI_ATTEMPT_DELAY_MS 1000
 #define WIFI_WAIT_COUNT 60
@@ -36,9 +42,20 @@
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
 
+// RF debounce
 #define GLOBAL_DEBOUNCE_MS 20
 #define SENSOR_DEBOUNCE_MS 2000
+#define RF_HISTORY_SIZE 32          // bounded history, no heap
 
+// Device ID
+#define DEVICE_ID_MAX_LEN 32
+
+// MQTT queue (fixed size, no heap)
+#define MQTT_TOPIC_MAX 48
+#define MQTT_PAYLOAD_MAX 160
+#define MQTT_QUEUE_DEPTH 20
+
+// Debug
 #define DEBUG_MODE true
 #define DEBUG_PRINT(x)    if (DEBUG_MODE) Serial.print(x)
 #define DEBUG_PRINTLN(x)  if (DEBUG_MODE) Serial.println(x)

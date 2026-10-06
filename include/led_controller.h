@@ -15,8 +15,8 @@ enum class LedState {
 
 struct BlinkEvent {
     CRGB color;
-    int times;
-    int delayMs;
+    uint16_t times;
+    uint16_t delayMs;
 };
 
 class LEDController {
@@ -24,15 +24,15 @@ public:
     static void init();
     static void task(void *param);
     static void setState(LedState state);
-    static void blinkColor(CRGB color, int times = 1, int delayMs = 100);
+    static void blinkColor(CRGB color, uint16_t times = 1, uint16_t delayMs = 100);
 
 private:
     static CRGB leds[NUM_LEDS];
-    static LedState currentBaseState;
+    static volatile LedState currentBaseState;
     static QueueHandle_t blinkQueue;
     static BlinkEvent currentBlink;
     static bool isBlinking;
-    static int blinkCount;
+    static uint16_t blinkCount;
     static bool blinkOn;
     static unsigned long lastBlinkTime;
 
